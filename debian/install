@@ -1,0 +1,12 @@
+tmenu /usr/lib/python3/dist-packages/
+data/tmenu.css /usr/share/tmenu/
+tmenu.desktop /usr/share/applications/
+
+tmenu-launcher usr/bin/
+
+debian/tmenu-autostart.desktop /etc/xdg/autostart/
+
+debian/99-power-management-tmenu.rules /etc/polkit-1/rules.d/
+
+data/icons/* /usr/share/icons/
+tui-menu/menu usr/bin/

@@ -1,0 +1,16 @@
+setup.py
+tmenu/__init__.py
+tmenu/__main__.py
+tmenu/cache.py
+tmenu/config.py
+tmenu/daemon.py
+tmenu/fuzzy.py
+tmenu/main.py
+tmenu/popup.py
+tmenu/power.py
+tmenu/ui.py
+tmenu/xdg_parser.py
+tmenu.egg-info/PKG-INFO
+tmenu.egg-info/SOURCES.txt
+tmenu.egg-info/dependency_links.txt
+tmenu.egg-info/top_level.txt

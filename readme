@@ -1,0 +1,477 @@
+================================================================================
+                        TMENU - COMPLETE DOCUMENTATION
+================================================================================
+
+# TMenu - Lightweight Application Launcher
+
+TMenu is a fast, keyboard-centric GTK-based application launcher and power 
+manager for Linux. It features a compact dual-pane interface with fuzzy search, 
+real-time app synchronization, power management controls, and intelligent 
+caching for near-instant performance.
+
+================================================================================
+## 🚀 KEY FEATURES
+================================================================================
+
+- RAM-Backed Caching: Stores application metadata in /tmp/tmenu/ for 
+  lightning-fast loads with automatic cleanup on reboot
+  
+- Wayland & X11 Ready: Optimized with POPUP_MENU hints to handle window 
+  decorations and focus correctly across display servers
+  
+- Live Synchronization: Automatically detects system application installations 
+  and removals with real-time UI updates
+  
+- Fuzzy Search: Quickly find applications with partial or misspelled names
+
+- Smart Terminal Integration: Detects CLI commands (e.g., sudo) and executes 
+  them in a persistent terminal window
+  
+- Power Management: Init-agnostic power controls for Lock, Logout, Reboot, 
+  and Shutdown through power.py module
+  
+- Hygiene Mode: Prevents __pycache__ folders and orphaned files after uninstalls
+
+- Compact Layout: Optimized 480x520 window for a tight, efficient feel
+
+- TUI Menu: Terminal User Interface alternative with fzf integration for 
+  keyboard-driven app launching in the terminal
+
+================================================================================
+## 📦 INSTALLATION
+================================================================================
+
+### Global Command Setup (Python UI)
+
+Create a launcher script to use TMenu as a global command:
+
+$ sudo nano /usr/bin/tmenu
+
+Paste the following:
+
+    #!/bin/bash
+    exec python3 -m tmenu "$@"
+
+Make it executable:
+
+$ sudo chmod +x /usr/bin/tmenu
+
+Now you can run 'tmenu' from anywhere!
+
+### TUI Menu Installation (Terminal Version)
+
+The TUI menu is installed as 'menu' command in your Debian package.
+
+If you installed from deb package, it's automatically available as:
+
+$ menu
+
+To verify it's installed:
+
+$ which menu
+/usr/bin/menu
+
+================================================================================
+## ⚙️ SYSTEM REQUIREMENTS
+================================================================================
+
+Python UI Requirements:
+- Python 3.8+
+- GTK 3.0+
+- Linux (init-agnostic)
+
+TUI Menu Requirements (in addition to above):
+- fzf: The fuzzy finder engine
+- jq: The tool that lets Bash "read" your Python apps.json file
+- Bash shell
+
+### Install Dependencies
+
+Debian/Ubuntu:
+
+$ sudo apt-get install python3-gi gir1.2-gtk-3.0 python3-pil fzf jq
+
+Fedora/RHEL:
+
+$ sudo dnf install python3-gobject gtk3 python3-pillow fzf jq
+
+Arch:
+
+$ sudo pacman -S python-gobject gtk3 python-pillow fzf jq
+
+================================================================================
+## 🎯 LAUNCH MODES & CLI OPTIONS (Python UI)
+================================================================================
+
+### Standard Launch
+
+$ tmenu                          # Opens in screen center
+
+### Utility Flags
+
+$ tmenu --panel                  # Opens at current mouse cursor position
+$ tmenu --refresh                # Re-scans system apps before opening
+$ tmenu --daemon                 # Starts background cache service (5-min loop)
+
+### TUI Menu Launch
+
+$ menu                           # Opens fzf-based terminal menu
+
+Usage: After running the main tmenu UI once to generate the cache, you can 
+use 'menu' in any terminal for quick app launching.
+
+================================================================================
+## ⌨️ KEYBOARD SHORTCUTS (Python UI)
+================================================================================
+
+Arrow Keys          | Navigate between Sidebar and App List
+Left / Right        | Jump focus between Sidebar and App List
+Enter               | Launch selected application or command
+Escape              | Close menu
+Auto-focus          | Search field focuses automatically on launch
+
+TUI Menu Shortcuts (fzf):
+
+↑/↓                 | Navigate applications
+Type                | Search/filter applications
+Enter               | Launch selected app
+Esc                 | Quit without launching
+
+================================================================================
+## 📐 CONFIGURATION
+================================================================================
+
+Settings are stored in: ~/.config/tmenu/config.json
+
+Configuration Directory Structure:
+
+    ~/.config/tmenu/
+    ├── config.json                 # Universal settings
+    ├── config-x11.json            # X11-specific overrides
+    └── config-wayland.json        # Wayland-specific overrides
+
+### Layout Positioning Guide
+
+VERTICAL POSITION:
+
+    ┌─────────────────────────────┐
+    │ "top"                       │  ← Menu appears here
+    │                             │
+    │                             │
+    │ "bottom"                    │
+    └─────────────────────────────┘
+                                    ↑ Menu appears here
+
+HORIZONTAL POSITION:
+
+    ┌──────────────────────────────┐
+    │ "left"  "center"  "right"    │
+    │  ↑       ↑         ↑          │
+    │  │       │         │          │
+    │  └───────┼─────────┘          │
+    └──────────────────────────────┘
+
+OFFSET VALUES:
+
+offset_x: 
+  Positive (+) = Move RIGHT ➡️
+  Negative (-) = Move LEFT ⬅️
+  Example: offset_x: 50   (move 50px right)
+  Example: offset_x: -30  (move 30px left)
+
+offset_y:
+  Positive (+) = Move DOWN ⬇️
+  Negative (-) = Move UP ⬆️
+  Example: offset_y: 100  (move 100px down)
+  Example: offset_y: -50  (move 50px up)
+
+### Example Configuration (config.json)
+
+{
+  "layout": {
+    "vertical_position": "bottom",
+    "horizontal_position": "left",
+    "screen_margin": 10,
+    "offset_x": 0,
+    "offset_y": -100
+  },
+  "theme": {
+    "icon_size": 48,
+    "font_size": 10,
+    "dark_mode": true
+  },
+  "sidebar_width": 180,
+  "search": {
+    "enabled": true,
+    "placeholder": "Search applications..."
+  },
+  "power_buttons": [
+    {
+      "label": "Shutdown",
+      "icon": "system-shutdown"
+    },
+    {
+      "label": "Reboot",
+      "icon": "system-reboot"
+    },
+    {
+      "label": "Lock",
+      "icon": "system-lock-screen"
+    },
+    {
+      "label": "Logout",
+      "icon": "system-log-out"
+    }
+  ]
+}
+
+Note: Power commands are handled by power.py module which automatically detects
+and uses the appropriate commands for your system (init-agnostic).
+
+### Quick Positioning Examples
+
+Bottom-left with 50px margin:
+
+{
+  "layout": {
+    "vertical_position": "bottom",
+    "horizontal_position": "left",
+    "screen_margin": 50
+  }
+}
+
+Top-right:
+
+{
+  "layout": {
+    "vertical_position": "top",
+    "horizontal_position": "right",
+    "screen_margin": 10
+  }
+}
+
+Center-bottom, moved up 150px:
+
+{
+  "layout": {
+    "vertical_position": "bottom",
+    "horizontal_position": "center",
+    "offset_y": -150
+  }
+}
+
+Bottom-left, shifted right 100px and up 50px:
+
+{
+  "layout": {
+    "vertical_position": "bottom",
+    "horizontal_position": "left",
+    "offset_x": 100,
+    "offset_y": -50
+  }
+}
+
+### Configuration Tips
+
+- After editing config, restart TMenu to apply changes
+- Use --refresh flag to clear cache: tmenu --refresh
+- Check debug output for actual X, Y coordinates
+- screen_margin applies first, then offsets adjust from there
+- Display-specific configs override universal settings
+- Use 'python3 -m tmenu.config' to view configuration help
+- Power buttons are configured by label only; commands are managed by power.py
+
+================================================================================
+## 📂 PROJECT STRUCTURE
+================================================================================
+
+tmenu/
+├── __main__.py      # Package entry point
+├── main.py          # CLI argument handling
+├── ui.py            # GTK3 interface & window logic
+├── cache.py         # RAM-based (/tmp) caching
+├── xdg_parser.py    # Desktop entry parsing
+├── fuzzy.py         # Search & filtering algorithms
+├── power.py         # Init-agnostic power management
+└── config.py        # Configuration loader with validation
+
+Cache File Location: /tmp/tmenu/apps.json
+- Generated automatically by the Python UI
+- Contains all application metadata for both Python UI and TUI menu
+- Automatically cleaned up on system reboot
+
+================================================================================
+## 🐛 TROUBLESHOOTING
+================================================================================
+
+### Wayland Positioning Issues
+
+On Wayland (GNOME/KDE), absolute window positioning is restricted by the 
+compositor. Use configuration file offsets instead:
+
+{
+  "layout": {
+    "vertical_position": "bottom",
+    "horizontal_position": "left",
+    "offset_y": -100
+  }
+}
+
+### Cache Issues
+
+$ tmenu --refresh        # Force rebuild cache
+$ rm -rf /tmp/tmenu/     # Clear cache directory
+$ tmenu --daemon         # Restart background daemon
+
+### Power Buttons Not Working
+
+Power management is handled by power.py and is init-agnostic. Ensure:
+
+- Your user has appropriate permissions for power operations
+- DBus is available on your system
+- Check system logs for power-related errors
+
+### TUI Menu Not Working
+
+Error: "Cache not found at /tmp/tmenu/apps.json"
+Solution: Run the main tmenu Python UI once to generate the cache
+
+Error: "fzf: command not found"
+Solution: Install fzf (see System Requirements section)
+
+Error: "jq: command not found"
+Solution: Install jq (see System Requirements section)
+
+Error: "menu: command not found"
+Solution: Check if menu is installed correctly:
+  $ which menu
+  $ ls -la /usr/bin/menu
+
+### Debug Output
+
+$ DEBUG=1 tmenu
+
+### Verify Cache File Exists
+
+$ ls -la /tmp/tmenu/apps.json
+$ cat /tmp/tmenu/apps.json | jq '.' | head -20
+
+================================================================================
+## 📝 HOW TUI MENU WORKS
+================================================================================
+
+The TUI (Terminal User Interface) menu is a lightweight bash script that:
+
+1. Reads the apps.json cache file generated by the Python UI
+2. Uses jq to extract application names from the JSON
+3. Pipes them to fzf for interactive fuzzy selection
+4. Launches the selected application using the Exec command from the cache
+
+Workflow:
+
+User runs 'menu'
+  ↓
+Script checks /tmp/tmenu/apps.json exists
+  ↓
+jq extracts all application names
+  ↓
+fzf displays interactive menu
+  ↓
+User selects app and presses Enter
+  ↓
+Script extracts Exec command from cache
+  ↓
+Application launches in background
+
+Key Advantages:
+
+- No GUI overhead - runs entirely in terminal
+- Faster for keyboard-driven users
+- Works over SSH (if display is forwarded)
+- Minimal resource usage
+- Same cache as Python UI - always in sync
+- Single 'menu' command from anywhere in the system
+
+================================================================================
+## 🚀 QUICK START GUIDE
+================================================================================
+
+Step 1: Install Package
+
+If using Debian package:
+
+$ sudo apt install tmenu
+
+This automatically installs both 'tmenu' (GUI) and 'menu' (TUI) commands.
+
+Or install dependencies manually:
+
+$ sudo apt-get install python3-gi gir1.2-gtk-3.0 python3-pil fzf jq
+
+Step 2: Generate Initial Cache
+
+$ tmenu --refresh
+
+Step 3: Try Both UIs
+
+$ tmenu              # Python GUI version
+$ menu               # Terminal version
+
+Step 4: Configure (Optional)
+
+$ nano ~/.config/tmenu/config.json
+
+Step 5: Add to Autostart (Optional)
+
+$ tmenu --daemon     # Runs background cache refresh every 5 minutes
+
+Step 6: Use Anywhere
+
+From terminal:
+  $ menu              # Quick app launcher in terminal
+
+From GUI:
+  $ tmenu             # Full-featured GUI launcher
+
+From applications menu or keybinding:
+  $ tmenu --panel     # Opens at cursor for taskbar integration
+
+================================================================================
+## 📝 COMMAND REFERENCE
+================================================================================
+
+Python UI Commands:
+
+tmenu                    # Open main GUI launcher
+tmenu --panel            # Open at cursor position
+tmenu --refresh          # Force rebuild app cache
+tmenu --daemon           # Start background cache daemon
+
+TUI Menu Commands:
+
+menu                     # Open terminal fuzzy menu
+menu                     # Type to search, Enter to launch
+
+Power Management:
+
+Power management (Shutdown, Reboot, Lock, Logout) is handled by power.py and
+automatically detects the appropriate system commands. Configuration is 
+simplified to button labels only - the implementation is init-agnostic and 
+system-independent.
+
+Both systems share the same cache (/tmp/tmenu/apps.json), so they're always
+synchronized. Generate the cache with 'tmenu --refresh' or run the GUI once.
+
+================================================================================
+## 📝 LICENSE
+================================================================================
+
+MIT License
+
+================================================================================
+## 👨‍💻 DEVELOPER
+================================================================================
+
+Developed by Roy | 2026
+
+================================================================================

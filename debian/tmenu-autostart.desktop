@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=TMenu Daemon
+Exec=tmenu --daemon
+Hidden=false
+NoDisplay=true

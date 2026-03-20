@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=TMenu
+Comment=Application menu for tiling window managers
+Exec=tmenu --panel
+Icon=tmenu
+Terminal=false
+Type=Application
+Categories=Utility;
+Hidden=true

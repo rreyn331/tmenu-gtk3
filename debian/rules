@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_install:
+	# 1. Run the standard install process first
+	dh_install
+	# 2. Rename the file inside the debian/tmenu/ helper directory
+	# This prevents 'tmenu' from being created as a directory.
+	mv debian/tmenu/usr/bin/tmenu-launcher debian/tmenu/usr/bin/tmenu

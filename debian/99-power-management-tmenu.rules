@@ -1,0 +1,45 @@
+polkit.addRule(function(action, subject) {
+    // 1. Authorize the high-level systemd actions (loginctl/systemctl)
+    var systemActions = [
+        "org.freedesktop.login1.reboot",
+        "org.freedesktop.login1.reboot-multiple-sessions",
+        "org.freedesktop.login1.power-off",
+        "org.freedesktop.login1.power-off-multiple-sessions",
+        "org.freedesktop.login1.hibernate",
+        "org.freedesktop.login1.hibernate-multiple-sessions"
+    ];
+
+    // 2. Authorize specific binary execution for your fallbacks (pkexec)
+    var authorizedBinaries = [
+        "/usr/sbin/reboot",
+        "/usr/sbin/shutdown",
+        "/usr/sbin/poweroff",
+        "/usr/sbin/telinit",
+        "/usr/sbin/init",
+        "/usr/sbin/pm-hibernate",
+        "/usr/sbin/hibernate",
+        "/usr/bin/tee" // Required for the 'echo disk | tee' fallback
+    ];
+
+    var isAuthorizedGroup = (
+        subject.isInGroup("wheel") || 
+        subject.isInGroup("sudo") || 
+        subject.isInGroup("admin") || 
+        subject.isInGroup("users")
+    );
+
+    if (isAuthorizedGroup) {
+        // Handle Systemd Actions
+        if (systemActions.indexOf(action.id) !== -1) {
+            return polkit.Result.YES;
+        }
+
+        // Handle pkexec Fallbacks
+        if (action.id === "org.freedesktop.policykit.exec") {
+            var program = action.lookup("program");
+            if (authorizedBinaries.indexOf(program) !== -1) {
+                return polkit.Result.YES;
+            }
+        }
+    }
+});

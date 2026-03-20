@@ -1,0 +1,12 @@
+Source: tmenu
+Section: utils
+Priority: optional
+Maintainer: Roy Reynolds <royreynolds331@gmail.com>
+Build-Depends: debhelper-compat (= 13), python3, python3-setuptools
+Standards-Version: 4.6.2
+
+Package: tmenu
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}, python3-gi, fzf, jq
+Description: Lightweight GTK start menu
+ A fast application launcher similar to Whisker Menu.

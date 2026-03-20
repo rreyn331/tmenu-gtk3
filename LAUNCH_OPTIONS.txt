@@ -1,0 +1,38 @@
+# TMenu - Lightweight Application Launcher
+
+TMenu is a fast, GTK-based application launcher designed for Linux. It features a dual-pane interface with category filtering, fuzzy searching, power management, and a RAM-backed caching system for near-instant performance.
+
+## 🚀 Key Features
+
+* **RAM-Backed Caching:** Stores application metadata in `/tmp/tmenu/` to ensure lightning-fast loads and automatic cleanup on reboot.
+* **Wayland & X11 Ready:** Optimized with `POPUP_MENU` hints to remove window decorations (top bars/borders) and handle focus correctly across different display servers.
+* **Live Synchronization:** Automatically detects when you install or remove system applications and updates the UI in real-time.
+* **Fuzzy Search:** Quickly find applications even with partial or misspelled names.
+* **Terminal Integration:** If an app isn't found, TMenu offers to run your search query as a command in your default terminal.
+
+---
+
+## 🛠️ Launch Modes & CLI Options
+
+TMenu can be customized via command-line arguments to fit your specific workflow:
+
+| Flag | Description |
+| :--- | :--- |
+| (None) | **Center Mode:** Opens the menu in the center of the screen. |
+| `--panel` | **Mouse Mode:** Opens the menu at the current cursor position (ideal for taskbars). |
+| `--cache` / `--refresh` | **Force Rebuild:** Manually re-scans system applications and updates the RAM cache. |
+| `--daemon` | **Service Mode:** Runs the background cache daemon without opening the UI. |
+
+---
+
+## 📂 Project Structure
+
+```text
+tmenu/
+├── main.py          # Entry point (handles CLI arguments)
+├── ui.py            # GTK3 Interface & Window Logic
+├── cache.py         # RAM-based (/tmp) persistence & staleness checks
+├── xdg_parser.py    # Desktop entry parsing logic
+├── fuzzy.py         # Search & filtering algorithms
+├── power.py         # Shutdown, Reboot, and Session logic
+└── config.py        # User configuration loader
