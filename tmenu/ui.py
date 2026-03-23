@@ -9,6 +9,14 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
+# Attempt to load GtkLayerShell for Wayland positioning
+try:
+    gi.require_version("GtkLayerShell", "0.1")
+    from gi.repository import GtkLayerShell
+    HAS_LAYER_SHELL = True
+except (ValueError, ImportError):
+    HAS_LAYER_SHELL = False
+
 # Path Fix
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path: sys.path.insert(0, current_dir)
@@ -34,17 +42,21 @@ CATEGORY_DATA = {
 }
 
 class TMenu:
-    # Tighter UI Dimensions Re-confirmed
     WIDTH, HEIGHT, ICON_SIZE = 480, 520, 28
 
     def __init__(self, force_refresh=False):
         refresh = force_refresh or "--refresh" in sys.argv
         self.apps = cache.load_cache(force_refresh=refresh)
-        self.config = config.load()  # Auto-detects display type (X11/Wayland)
-        self.display_type = "wayland" if os.environ.get("WAYLAND_DISPLAY") else "x11"
+        self.config = config.load()  
+        
+        # 1. Bulletproof Display Detection
+        # We ask GTK directly what display server it is rendering to
+        display = Gdk.Display.get_default()
+        self.is_wayland = 'Wayland' in type(display).__name__
+        self.display_type = "wayland" if self.is_wayland else "x11"
+        
         self.icon_theme = Gtk.IconTheme.get_default()
         self.pixbuf_cache = {}
-        self.is_wayland = self.display_type == "wayland"
         self.positioned = False
 
         self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
@@ -59,14 +71,21 @@ class TMenu:
             self.window.set_type_hint(Gdk.WindowTypeHint.UTILITY)
         else:
             self.window.set_type_hint(Gdk.WindowTypeHint.POPUP_MENU)
+            
+        # Initialize Layer Shell ONLY if strictly on Wayland
+        if self.is_wayland and HAS_LAYER_SHELL:
+            GtkLayerShell.init_for_window(self.window)
+            GtkLayerShell.set_layer(self.window, GtkLayerShell.Layer.OVERLAY)
+            GtkLayerShell.set_keyboard_mode(self.window, GtkLayerShell.KeyboardMode.ON_DEMAND)
         
-        self.window.set_default_size(self.WIDTH, self.HEIGHT)
+        # 2. Strict Size Enforcement
+        # Prevents Wayland or XWayland from squashing the menu
+        self.window.set_size_request(self.WIDTH, self.HEIGHT)
         self.window.set_position(Gtk.WindowPosition.NONE)
         
         self.active_list = None
         self.build_ui()
         
-        # Connect signals
         self.window.connect("focus-out-event", lambda w, e: self.quit())
         self.window.connect("key-press-event", self.on_key)
         self.window.connect("button-press-event", self.on_window_click)
@@ -74,7 +93,6 @@ class TMenu:
         self.window.connect("delete-event", lambda w, e: self.quit() or True)
 
     def quit(self):
-        """Properly quit the application"""
         try:
             Gtk.main_quit()
         except:
@@ -82,14 +100,11 @@ class TMenu:
         sys.exit(0)
 
     def on_window_click(self, widget, event):
-        """Close on any click outside focused widget"""
         return False
 
     def on_window_mapped(self, widget, event):
-        """Called when window is first mapped/shown - position it once"""
         if not self.positioned:
             self.positioned = True
-            # Position after window is mapped
             GLib.timeout_add(50, self.set_smart_position)
         return False
 
@@ -110,11 +125,9 @@ class TMenu:
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, border_width=10)
         self.window.add(vbox)
         
-        # Main Content Area
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
         vbox.pack_start(hbox, True, True, 0)
 
-        # Sidebar (configurable width from config)
         sidebar_width = self.config.get("layout", {}).get("sidebar_width", 180)
         self.cat_list = Gtk.ListBox()
         self.scroll_cat_win = Gtk.ScrolledWindow(width_request=sidebar_width)
@@ -122,14 +135,12 @@ class TMenu:
         self.scroll_cat_win.add(self.cat_list)
         hbox.pack_start(self.scroll_cat_win, False, False, 0)
 
-        # App List
         self.app_list = Gtk.ListBox()
         self.scroll_app_win = Gtk.ScrolledWindow()
         self.scroll_app_win.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroll_app_win.add(self.app_list)
         hbox.pack_start(self.scroll_app_win, True, True, 0)
 
-        # Power Data Injection (Searchable)
         self.power_commands_data = [
             {"Name": "Lock Screen", "Icon": "system-lock-screen", "action": "lock", "is_power": True},
             {"Name": "Logout", "Icon": "system-log-out", "action": "logout", "is_power": True},
@@ -142,19 +153,15 @@ class TMenu:
         for a in self.apps: self.create_app_row(a)
         self.terminal_row = self.create_app_row({"Name": "Terminal Run", "Icon": "utilities-terminal", "is_terminal": True}, visible=False)
 
-        # Horizontal Bottom Bar
         bottom_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, margin_top=10)
         vbox.pack_end(bottom_bar, False, False, 0)
         
-        # Power Buttons (Left side, self-adjusting spacing)
         self.power_box = Gtk.Box(spacing=4)
         bottom_bar.pack_start(self.power_box, False, False, 0)
 
-        # Spacer to keep search aligned with app list
         spacer = Gtk.Box(width_request=10)
         bottom_bar.pack_start(spacer, False, False, 0)
 
-        # Search Bar (Right side, expanded)
         self.search_entry = Gtk.Entry(placeholder_text="Search...", width_chars=25)
         self.search_entry.set_icon_from_icon_name(Gtk.EntryIconPosition.SECONDARY, "edit-clear-symbolic")
         self.search_entry.connect("changed", self.on_search)
@@ -230,7 +237,6 @@ class TMenu:
         self.quit()
 
     def load_power_buttons(self):
-        """Load power buttons from config"""
         for child in self.power_box.get_children(): self.power_box.remove(child)
         for b in self.config.get("power_buttons", []):
             name = b.get("name") or b.get("action", "").capitalize()
@@ -317,36 +323,48 @@ class TMenu:
         adj.clamp_page(alloc.y, alloc.y + alloc.height)
 
     def get_position_from_args(self):
-        """Determine position from CLI args (takes precedence over config)"""
-        if "--left" in sys.argv:
-            return "left"
-        elif "--right" in sys.argv:
-            return "right"
-        elif "--center" in sys.argv:
-            return "center"
-        elif "--top" in sys.argv:
-            return "top"
-        elif "--bottom" in sys.argv:
-            return "bottom"
-        else:
-            # Get position from display-specific config
-            return self.config.get("layout", {}).get("horizontal_position", "left")
+        if "--left" in sys.argv: return "left"
+        elif "--right" in sys.argv: return "right"
+        elif "--center" in sys.argv: return "center"
+        elif "--top" in sys.argv: return "top"
+        elif "--bottom" in sys.argv: return "bottom"
+        else: return self.config.get("layout", {}).get("horizontal_position", "left")
 
     def set_smart_position(self):
-        """Position the window - with Wayland offset support"""
+        """Position the window dynamically for Wayland or X11"""
         try:
             layout = self.config.get("layout", {})
-            
-            # Use display-specific positioning
             vertical_position = layout.get("vertical_position", "bottom")
             horizontal_position = self.get_position_from_args()
             screen_margin = layout.get("screen_margin", 10)
             offset_x = layout.get("offset_x", 0)
             offset_y = layout.get("offset_y", 0)
             
+            # WAYLAND POSITIONING (Layer Shell)
+            if self.is_wayland and HAS_LAYER_SHELL:
+                for edge in [GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM, GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT]:
+                    GtkLayerShell.set_anchor(self.window, edge, False)
+
+                if vertical_position == "top":
+                    GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.TOP, True)
+                    GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.TOP, screen_margin + offset_y) 
+                else: 
+                    GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.BOTTOM, True)
+                    GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.BOTTOM, max(0, screen_margin - offset_y)) 
+
+                if horizontal_position == "left":
+                    GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.LEFT, True)
+                    GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.LEFT, screen_margin + offset_x)
+                elif horizontal_position == "right":
+                    GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.RIGHT, True)
+                    GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.RIGHT, max(0, screen_margin - offset_x))
+
+                self.window.present()
+                self.search_entry.grab_focus()
+                return False
+
+            # X11 POSITIONING (Absolute Coordinates Fallback)
             display = Gdk.Display.get_default()
-            
-            # Get monitor
             monitor = None
             try:
                 seat = display.get_default_seat()
@@ -367,27 +385,20 @@ class TMenu:
             
             geom = monitor.get_geometry()
             
-            # Calculate X position (horizontal)
             if horizontal_position == "left":
                 x = geom.x + screen_margin + offset_x
             elif horizontal_position == "right":
                 x = geom.x + geom.width - self.WIDTH - screen_margin + offset_x
-            else:  # "center"
+            else:  
                 x = geom.x + (geom.width // 2) - (self.WIDTH // 2) + offset_x
             
-            # Calculate Y position (vertical)
             if vertical_position == "top":
                 y = geom.y + screen_margin + offset_y
-            else:  # "bottom"
+            else:  
                 y = geom.y + geom.height - self.HEIGHT - screen_margin + offset_y
             
-            # Clamp to screen bounds
             x = max(geom.x, min(int(x), geom.x + geom.width - self.WIDTH))
             y = max(geom.y, min(int(y), geom.y + geom.height - self.HEIGHT))
-            
-            # Debug output
-            if self.is_wayland:
-                print(f"DEBUG Wayland: vertical={vertical_position} horizontal={horizontal_position} offset_x={offset_x} offset_y={offset_y} final_x={x} final_y={y}")
             
             self.window.move(x, y)
             self.window.present()
@@ -401,7 +412,6 @@ class TMenu:
         return False
 
     def run(self):
-        # Setup signal handlers for proper cleanup
         def signal_handler(sig, frame):
             self.quit()
         
