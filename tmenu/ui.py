@@ -83,8 +83,8 @@ class TMenu:
         self.active_list = None
         self.build_ui()
         
-        # DAEMON EVENTS: Force the lambda so GTK passes the event correctly for auto-hiding
-        self.window.connect("focus-out-event", lambda w, e: self.hide_menu())
+        # DAEMON EVENTS: Force auto-hiding logic
+        self.window.connect("focus-out-event", self.on_focus_out)
         self.window.connect("delete-event", lambda w, e: self.hide_menu())
         self.window.connect("key-press-event", self.on_key)
         self.window.connect("button-press-event", self.on_window_click)
@@ -95,16 +95,31 @@ class TMenu:
         self.set_smart_position()
         self.window.show_all()
         
-        # 1. Bypass Window Manager focus stealing prevention
+        # Bypass Window Manager focus stealing prevention
         self.window.present_with_time(Gdk.CURRENT_TIME)
         
-        # 2. Aggressively grab keyboard focus
-        self.window.grab_focus()
-        self.search_entry.grab_focus()
+        # Wait a tiny fraction of a second to guarantee the WM gives us focus, 
+        # otherwise clicking off the menu won't work because it never "had" focus!
+        GLib.timeout_add(50, self.force_focus)
         
         return True
 
+    def force_focus(self):
+        """Helper to aggressively steal keyboard focus after mapping"""
+        self.window.grab_focus()
+        self.search_entry.grab_focus()
+        return False
+
+    def on_focus_out(self, widget, event):
+        """Triggered when the user clicks somewhere else on the screen"""
+        self.hide_menu()
+        return False
+
     def hide_menu(self, *args):
+        # Prevent double-hiding recursive loops
+        if not self.window.get_visible():
+            return False
+            
         self.window.hide()
         self.search_entry.set_text("") # Clear search automatically
         
@@ -112,7 +127,6 @@ class TMenu:
         if getattr(self, "is_daemon", False) == False:
             self.true_quit()
             
-        # IMPORTANT: Returning False tells GTK to finish dropping focus normally
         return False
 
     def true_quit(self, *args):
