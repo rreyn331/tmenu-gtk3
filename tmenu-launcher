@@ -1,2 +1,4 @@
 #!/bin/bash
-exec python3 -m tmenu "$@"
+python3 -m tmenu "$@" &
+disown
+exit
