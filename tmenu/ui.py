@@ -7,7 +7,7 @@ import signal
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GLib
 
 # Attempt to load GtkLayerShell for Wayland positioning
 try:
@@ -50,13 +50,11 @@ class TMenu:
         self.config = config.load()  
         
         # 1. Bulletproof Display Detection
-        # We ask GTK directly what display server it is rendering to
         display = Gdk.Display.get_default()
         self.is_wayland = 'Wayland' in type(display).__name__
         self.display_type = "wayland" if self.is_wayland else "x11"
         
         self.icon_theme = Gtk.IconTheme.get_default()
-        self.pixbuf_cache = {}
         self.positioned = False
 
         self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
@@ -79,25 +77,52 @@ class TMenu:
             GtkLayerShell.set_keyboard_mode(self.window, GtkLayerShell.KeyboardMode.ON_DEMAND)
         
         # 2. Strict Size Enforcement
-        # Prevents Wayland or XWayland from squashing the menu
         self.window.set_size_request(self.WIDTH, self.HEIGHT)
         self.window.set_position(Gtk.WindowPosition.NONE)
         
         self.active_list = None
         self.build_ui()
         
-        self.window.connect("focus-out-event", lambda w, e: self.quit())
+        # DAEMON EVENTS: Force the lambda so GTK passes the event correctly for auto-hiding
+        self.window.connect("focus-out-event", lambda w, e: self.hide_menu())
+        self.window.connect("delete-event", lambda w, e: self.hide_menu())
         self.window.connect("key-press-event", self.on_key)
         self.window.connect("button-press-event", self.on_window_click)
         self.window.connect("map-event", self.on_window_mapped)
-        self.window.connect("delete-event", lambda w, e: self.quit() or True)
 
-    def quit(self):
+    # --- DAEMON & VISIBILITY METHODS ---
+    def show_menu(self, *args):
+        self.set_smart_position()
+        self.window.show_all()
+        
+        # 1. Bypass Window Manager focus stealing prevention
+        self.window.present_with_time(Gdk.CURRENT_TIME)
+        
+        # 2. Aggressively grab keyboard focus
+        self.window.grab_focus()
+        self.search_entry.grab_focus()
+        
+        return True
+
+    def hide_menu(self, *args):
+        self.window.hide()
+        self.search_entry.set_text("") # Clear search automatically
+        
+        # If the daemon isn't managing this window, kill the process completely so it doesn't hang!
+        if getattr(self, "is_daemon", False) == False:
+            self.true_quit()
+            
+        # IMPORTANT: Returning False tells GTK to finish dropping focus normally
+        return False
+
+    def true_quit(self, *args):
+        """Used to actually kill the program when needed"""
         try:
             Gtk.main_quit()
         except:
             pass
         sys.exit(0)
+    # ------------------------------------
 
     def on_window_click(self, widget, event):
         return False
@@ -109,17 +134,11 @@ class TMenu:
         return False
 
     def get_scaled_icon(self, name, size):
-        cache_key = f"{name}_{size}"
-        if cache_key in self.pixbuf_cache: 
-            return Gtk.Image.new_from_pixbuf(self.pixbuf_cache[cache_key])
-        try:
-            info = self.icon_theme.lookup_icon(name or "application-x-executable", size, 0)
-            if info:
-                pb = info.load_icon().scale_simple(size, size, GdkPixbuf.InterpType.BILINEAR)
-                self.pixbuf_cache[cache_key] = pb
-                return Gtk.Image.new_from_pixbuf(pb)
-        except: pass
-        return Gtk.Image.new_from_icon_name("application-x-executable", Gtk.IconSize.MENU)
+        # SPEED OPTIMIZATION 1: Let GTK's native C engine handle image scaling
+        img = Gtk.Image()
+        img.set_from_icon_name(name or "application-x-executable", Gtk.IconSize.DIALOG)
+        img.set_pixel_size(size)
+        return img
 
     def build_ui(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, border_width=10)
@@ -136,6 +155,10 @@ class TMenu:
         hbox.pack_start(self.scroll_cat_win, False, False, 0)
 
         self.app_list = Gtk.ListBox()
+        
+        # FIX: The proper way to handle mouse clicks on a ListBox
+        self.app_list.connect("row-activated", self.on_app_clicked)
+        
         self.scroll_app_win = Gtk.ScrolledWindow()
         self.scroll_app_win.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroll_app_win.add(self.app_list)
@@ -172,6 +195,11 @@ class TMenu:
         self.load_power_buttons()
         self.active_list = self.app_list
 
+    def on_app_clicked(self, listbox, row):
+        """Triggered when an app row is clicked with the mouse"""
+        if row and hasattr(row, 'app_data'):
+            self.launch_item(row.app_data)
+
     def create_app_row(self, app, visible=True):
         row = Gtk.ListBoxRow(); row.app_data = app
         box = Gtk.Box(spacing=10, border_width=5)
@@ -180,7 +208,6 @@ class TMenu:
         row.label_widget = Gtk.Label(label=str(app.get("Name") or "Unknown"), xalign=0)
         box.pack_start(row.label_widget, True, True, 0)
         row.add(box)
-        row.connect("button-press-event", lambda r, e: self.launch_item(r.app_data) if e.button == 1 else None)
         self.app_list.add(row)
         if not visible: row.hide()
         return row
@@ -196,20 +223,29 @@ class TMenu:
         p_matches = {p["Name"] for p in self.power_commands_data if txt.lower() in p["Name"].lower()}
         
         found = False
+        
+        # SPEED OPTIMIZATION 2: Prevent GTK from redrawing widgets that are already visible
         for row in self.app_list.get_children():
-            if row == self.terminal_row: row.hide(); continue
+            if row == self.terminal_row: 
+                if row.get_visible(): row.hide()
+                continue
+            
             name = row.app_data.get("Name")
-            if name in match_names or name in p_matches:
-                row.show_all(); found = True
-            else: row.hide()
+            should_show = (name in match_names or name in p_matches)
+            
+            if should_show:
+                if not row.get_visible(): row.show_all()
+                found = True
+            else:
+                if row.get_visible(): row.hide()
 
         base_cmd = txt.split()[0] if txt else ""
         if not found and base_cmd and shutil.which(base_cmd):
-            self.terminal_row.show_all()
+            if not self.terminal_row.get_visible(): self.terminal_row.show_all()
             self.terminal_row.app_data["Exec"] = txt 
             self.terminal_row.label_widget.set_text(f"Run: {txt}")
         else:
-            self.terminal_row.hide()
+            if self.terminal_row.get_visible(): self.terminal_row.hide()
 
         self.select_first_visible(self.app_list)
 
@@ -217,24 +253,42 @@ class TMenu:
         if data.get("is_power"):
             act = data.get("action")
             if hasattr(power, act): 
-                try:
+                try: 
                     getattr(power, act)()
-                except:
+                except Exception: 
                     pass
+
         elif data.get("is_terminal"):
             cmd = data.get("Exec", "")
-            try:
-                subprocess.Popen(["x-terminal-emulator", "-e", f"bash -c {shlex.quote(cmd + '; exec bash')}"], start_new_session=True)
-            except:
+            try: 
+                subprocess.Popen(
+                    ["x-terminal-emulator", "-e", f"bash -c {shlex.quote(cmd + '; exec bash')}"], 
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception: 
                 pass
+
         else:
+            cmd = data.get("Exec", "")
+            args = [a for a in shlex.split(cmd) if not a.startswith('%')]
             try:
-                cmd = data.get("Exec", "")
-                args = [a for a in shlex.split(cmd) if not a.startswith('%')]
-                subprocess.Popen(args, start_new_session=True)
-            except: 
+                # FIX: Send all background app logs to DEVNULL so they don't hang 
+                # looking for the closed terminal window!
+                subprocess.Popen(
+                    args, 
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception: 
                 pass
-        self.quit()
+        
+        # DAEMON ACTION: Hide the menu so it is ready for next time
+        self.hide_menu()
 
     def load_power_buttons(self):
         for child in self.power_box.get_children(): self.power_box.remove(child)
@@ -273,10 +327,20 @@ class TMenu:
     def on_cat_selected(self, row):
         if not row or self.search_entry.get_text().strip(): return
         target = row.cat_name
+        
+        # SPEED OPTIMIZATION 3: Prevent Category Redraws
         for child in self.app_list.get_children():
-            if child == self.terminal_row: child.hide(); continue
+            if child == self.terminal_row: 
+                if child.get_visible(): child.hide()
+                continue
+                
             is_match = target == "All Applications" or child.app_data.get("Categories") == target
-            child.show_all() if (is_match and not child.app_data.get("is_power")) else child.hide()
+            should_show = (is_match and not child.app_data.get("is_power"))
+            
+            if should_show:
+                if not child.get_visible(): child.show_all()
+            else:
+                if child.get_visible(): child.hide()
 
     def select_first_visible(self, listbox):
         for r in listbox.get_children():
@@ -286,7 +350,9 @@ class TMenu:
 
     def on_key(self, w, e):
         k = e.keyval
-        if k == Gdk.KEY_Escape: self.quit(); return True
+        if k == Gdk.KEY_Escape: 
+            self.hide_menu() # Hides gracefully
+            return True
         if k == Gdk.KEY_Left:
             self.active_list = self.cat_list
             self.select_first_visible(self.cat_list)
@@ -359,8 +425,6 @@ class TMenu:
                     GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.RIGHT, True)
                     GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.RIGHT, max(0, screen_margin - offset_x))
 
-                self.window.present()
-                self.search_entry.grab_focus()
                 return False
 
             # X11 POSITIONING (Absolute Coordinates Fallback)
@@ -378,10 +442,7 @@ class TMenu:
                 monitors = [display.get_monitor(i) for i in range(display.get_n_monitors())]
                 monitor = monitors[0] if monitors else None
             
-            if not monitor:
-                self.window.present()
-                self.search_entry.grab_focus()
-                return False
+            if not monitor: return False
             
             geom = monitor.get_geometry()
             
@@ -401,31 +462,28 @@ class TMenu:
             y = max(geom.y, min(int(y), geom.y + geom.height - self.HEIGHT))
             
             self.window.move(x, y)
-            self.window.present()
-            self.search_entry.grab_focus()
             
         except Exception as e:
             print(f"DEBUG: Position error: {e}")
-            self.window.present()
-            self.search_entry.grab_focus()
         
         return False
 
     def run(self):
+        # Fallback runner if the user launches normally without the daemon
         def signal_handler(sig, frame):
-            self.quit()
+            self.true_quit()
         
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
         
         try:
-            self.window.show_all()
+            self.show_menu()
             Gtk.main()
         except KeyboardInterrupt:
-            self.quit()
+            self.true_quit()
         except Exception as e:
             print(f"DEBUG: Run error: {e}")
-            self.quit()
+            self.true_quit()
 
 if __name__ == "__main__":
     TMenu().run()

@@ -6,6 +6,7 @@ Main entry point
 
 import os
 import sys
+import signal
 
 # 1. Hygiene Mode: Prevent Python from writing .pyc files to __pycache__
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
@@ -14,6 +15,49 @@ os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+
+PID_FILE = "/tmp/tmenu.pid"
+
+# =========================================================================
+# 🔥 ULTIMATE SPEED TRICK: DAEMON WAKE-UP
+# We do this BEFORE importing GTK. If the daemon is running, this script
+# just pings it and exits in 0.001 seconds. No heavy loading required!
+# =========================================================================
+if os.path.exists(PID_FILE):
+    try:
+        with open(PID_FILE, "r") as f:
+            pid = int(f.read().strip())
+        
+        # Check if the process is actually alive
+        os.kill(pid, 0) 
+        
+        if "--quit" in sys.argv:
+            os.kill(pid, signal.SIGTERM)
+            print("TMenu Daemon killed.")
+            sys.exit(0)
+            
+        elif "--refresh" in sys.argv or "--cache" in sys.argv:
+            # Kill the old daemon so we can start a fresh one
+            os.kill(pid, signal.SIGTERM)
+            import time; time.sleep(0.2) 
+            
+        elif "--daemon" in sys.argv:
+            print("TMenu Daemon is already running in the background.")
+            sys.exit(0)
+            
+        else:
+            # NORMAL HOTKEY PRESS: Wake up the window and exit!
+            os.kill(pid, signal.SIGUSR1)
+            sys.exit(0)
+            
+    except (ValueError, OSError):
+        # The daemon crashed or isn't running. Clean up the dead file.
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+
+# =========================================================================
+# NORMAL STARTUP (Only runs if the daemon isn't handling things)
+# =========================================================================
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -32,27 +76,11 @@ except ImportError:
 def main():
     """
     Primary entry point for TMenu. 
-    
-    Usage:
-    - tmenu                    : Launch with display-specific config
-    - tmenu --refresh          : Force app cache rebuild, then launch
-    - tmenu --daemon           : Background service mode (for autostart/systemd)
-    
-    Configuration:
-    - ~/.config/tmenu/config.json           : Universal settings (power buttons, theme, search)
-    - ~/.config/tmenu/config-x11.json       : X11-specific layout & positioning
-    - ~/.config/tmenu/config-wayland.json   : Wayland-specific layout & positioning
-    
-    Each display type can have unique:
-    - vertical_position: "top" | "bottom"
-    - horizontal_position: "left" | "center" | "right"
-    - offset_x, offset_y: fine-tuning adjustments
-    - screen_margin, sidebar_width
     """
     
     # --- FLAG: --daemon (Background Service) ---
     if "--daemon" in sys.argv:
-        run_daemon()
+        run_daemon() # This now runs the combined UI/Cache daemon we made!
         return
 
     # --- FLAG: --refresh / --cache (Force Rebuild) ---
@@ -69,8 +97,8 @@ def main():
     cfg = load_config(display_type=display_type)
     layout = cfg.get("layout", {})
     
-    vertical_position = layout.get("vertical_position", "bottom")    # "top" or "bottom"
-    horizontal_position = layout.get("horizontal_position", "left")  # "left", "center", or "right"
+    vertical_position = layout.get("vertical_position", "bottom")    
+    horizontal_position = layout.get("horizontal_position", "left")  
     screen_margin = layout.get("screen_margin", 10)
     offset_x = layout.get("offset_x", 0)
     offset_y = layout.get("offset_y", 0)
