@@ -10,4 +10,4 @@ Architecture: all
 Depends: ${python3:Depends}, ${misc:Depends}, python3-gi, fzf, jq
 Recommends: gir1.2-gtklayershell-0.1
 Description: Lightweight GTK start menu
- A fast application launcher similar to Whisker Menu..
+ A fast application launcher similar to Whisker Menu.
