@@ -7,7 +7,7 @@ import signal
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib,GdkPixbuf
 
 # Attempt to load GtkLayerShell for Wayland positioning
 try:
@@ -148,9 +148,60 @@ class TMenu:
         return False
 
     def get_scaled_icon(self, name, size):
-        # SPEED OPTIMIZATION 1: Let GTK's native C engine handle image scaling
-        img = Gtk.Image()
-        img.set_from_icon_name(name or "application-x-executable", Gtk.IconSize.DIALOG)
+        """
+        Handles:
+        1. Absolute paths
+        2. Files in /usr/share/pixmaps/ (checking common extensions)
+        3. Theme lookups with common search paths
+        """
+        if not name:
+            return self._get_fallback_icon(size)
+
+        # 1. Handle Absolute Paths directly
+        if name.startswith("/") and os.path.exists(name):
+            try:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(name, size, size, True)
+                return Gtk.Image.new_from_pixbuf(pb)
+            except Exception:
+                pass
+
+        # 2. Broader /usr/share/pixmaps/ check
+        # Some .desktop files say "icon" but the file is "icon.png" or "icon.xpm"
+        base_pixmap = os.path.join("/usr/share/pixmaps", name)
+        # Try original name, then try adding common extensions if they aren't there
+        exts_to_try = ["", ".png", ".svg", ".xpm", ".jpg"]
+        for ext in exts_to_try:
+            test_path = base_pixmap + ext
+            if os.path.exists(test_path) and not os.path.isdir(test_path):
+                try:
+                    pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(test_path, size, size, True)
+                    return Gtk.Image.new_from_pixbuf(pb)
+                except Exception:
+                    continue
+
+        # 3. Enhanced Theme Lookup
+        # We strip the extension because GTK Icon Theme prefers 'gimp' over 'gimp.png'
+        clean_name = os.path.splitext(os.path.basename(name))[0]
+        
+        # Check theme for the cleaned name
+        if self.icon_theme.has_icon(clean_name):
+            img = Gtk.Image.new_from_icon_name(clean_name, Gtk.IconSize.MENU)
+            img.set_pixel_size(size)
+            return img
+
+        # Final attempt: search the theme for the raw name
+        if self.icon_theme.has_icon(name):
+            img = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.MENU)
+            img.set_pixel_size(size)
+            return img
+
+        return self._get_fallback_icon(size)
+
+    def _get_fallback_icon(self, size):
+        """Standard fallback that isn't a terminal if possible"""
+        # 'system-run' or 'gear' is often less confusing than a terminal icon
+        fallback = "application-x-executable" 
+        img = Gtk.Image.new_from_icon_name(fallback, Gtk.IconSize.MENU)
         img.set_pixel_size(size)
         return img
 
@@ -215,15 +266,26 @@ class TMenu:
             self.launch_item(row.app_data)
 
     def create_app_row(self, app, visible=True):
-        row = Gtk.ListBoxRow(); row.app_data = app
+        row = Gtk.ListBoxRow()
+        row.app_data = app
         box = Gtk.Box(spacing=10, border_width=5)
-        icon_name = app.get("Icon") or app.get("icon")
-        box.pack_start(self.get_scaled_icon(icon_name, self.ICON_SIZE), False, False, 0)
+        
+        # Pull icon name/path from various possible keys
+        icon_name = app.get("Icon") or app.get("icon") or "application-x-executable"
+        
+        icon_widget = self.get_scaled_icon(icon_name, self.ICON_SIZE)
+        box.pack_start(icon_widget, False, False, 0)
+        
         row.label_widget = Gtk.Label(label=str(app.get("Name") or "Unknown"), xalign=0)
         box.pack_start(row.label_widget, True, True, 0)
+        
         row.add(box)
         self.app_list.add(row)
-        if not visible: row.hide()
+        
+        if visible:
+            row.show_all()
+        else:
+            row.hide()
         return row
 
     def on_search(self, entry):
