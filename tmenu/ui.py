@@ -7,7 +7,7 @@ import signal
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib,GdkPixbuf
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 
 # Attempt to load GtkLayerShell for Wayland positioning
 try:
@@ -97,9 +97,13 @@ class TMenu:
         
         # Bypass Window Manager focus stealing prevention
         self.window.present_with_time(Gdk.CURRENT_TIME)
+
+        # X11: Explicitly grab the seat to catch clicks outside the window
+        if not self.is_wayland:
+            seat = Gdk.Display.get_default().get_default_seat()
+            seat.grab(self.window.get_window(), Gdk.SeatCapabilities.ALL, True, None, None, None)
         
-        # Wait a tiny fraction of a second to guarantee the WM gives us focus, 
-        # otherwise clicking off the menu won't work because it never "had" focus!
+        # Wait a tiny fraction of a second to guarantee focus
         GLib.timeout_add(50, self.force_focus)
         
         return True
@@ -119,11 +123,16 @@ class TMenu:
         # Prevent double-hiding recursive loops
         if not self.window.get_visible():
             return False
+
+        # X11: Release the grab before hiding
+        if not self.is_wayland:
+            seat = Gdk.Display.get_default().get_default_seat()
+            seat.ungrab()
             
         self.window.hide()
         self.search_entry.set_text("") # Clear search automatically
         
-        # If the daemon isn't managing this window, kill the process completely so it doesn't hang!
+        # If the daemon isn't managing this window, kill the process completely
         if getattr(self, "is_daemon", False) == False:
             self.true_quit()
             
@@ -136,7 +145,6 @@ class TMenu:
         except:
             pass
         sys.exit(0)
-    # ------------------------------------
 
     def on_window_click(self, widget, event):
         return False
@@ -148,16 +156,9 @@ class TMenu:
         return False
 
     def get_scaled_icon(self, name, size):
-        """
-        Handles:
-        1. Absolute paths
-        2. Files in /usr/share/pixmaps/ (checking common extensions)
-        3. Theme lookups with common search paths
-        """
         if not name:
             return self._get_fallback_icon(size)
 
-        # 1. Handle Absolute Paths directly
         if name.startswith("/") and os.path.exists(name):
             try:
                 pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(name, size, size, True)
@@ -165,10 +166,7 @@ class TMenu:
             except Exception:
                 pass
 
-        # 2. Broader /usr/share/pixmaps/ check
-        # Some .desktop files say "icon" but the file is "icon.png" or "icon.xpm"
         base_pixmap = os.path.join("/usr/share/pixmaps", name)
-        # Try original name, then try adding common extensions if they aren't there
         exts_to_try = ["", ".png", ".svg", ".xpm", ".jpg"]
         for ext in exts_to_try:
             test_path = base_pixmap + ext
@@ -179,17 +177,13 @@ class TMenu:
                 except Exception:
                     continue
 
-        # 3. Enhanced Theme Lookup
-        # We strip the extension because GTK Icon Theme prefers 'gimp' over 'gimp.png'
         clean_name = os.path.splitext(os.path.basename(name))[0]
         
-        # Check theme for the cleaned name
         if self.icon_theme.has_icon(clean_name):
             img = Gtk.Image.new_from_icon_name(clean_name, Gtk.IconSize.MENU)
             img.set_pixel_size(size)
             return img
 
-        # Final attempt: search the theme for the raw name
         if self.icon_theme.has_icon(name):
             img = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.MENU)
             img.set_pixel_size(size)
@@ -198,8 +192,6 @@ class TMenu:
         return self._get_fallback_icon(size)
 
     def _get_fallback_icon(self, size):
-        """Standard fallback that isn't a terminal if possible"""
-        # 'system-run' or 'gear' is often less confusing than a terminal icon
         fallback = "application-x-executable" 
         img = Gtk.Image.new_from_icon_name(fallback, Gtk.IconSize.MENU)
         img.set_pixel_size(size)
@@ -212,18 +204,18 @@ class TMenu:
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
         vbox.pack_start(hbox, True, True, 0)
 
+        # FIXED SIDEBAR WIDTH
         sidebar_width = self.config.get("layout", {}).get("sidebar_width", 180)
         self.cat_list = Gtk.ListBox()
-        self.scroll_cat_win = Gtk.ScrolledWindow(width_request=sidebar_width)
+        self.scroll_cat_win = Gtk.ScrolledWindow()
+        self.scroll_cat_win.set_size_request(sidebar_width, -1)
         self.scroll_cat_win.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroll_cat_win.add(self.cat_list)
         hbox.pack_start(self.scroll_cat_win, False, False, 0)
 
+        # APP LIST (RIGHT COLUMN)
         self.app_list = Gtk.ListBox()
-        
-        # FIX: The proper way to handle mouse clicks on a ListBox
         self.app_list.connect("row-activated", self.on_app_clicked)
-        
         self.scroll_app_win = Gtk.ScrolledWindow()
         self.scroll_app_win.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scroll_app_win.add(self.app_list)
@@ -261,7 +253,6 @@ class TMenu:
         self.active_list = self.app_list
 
     def on_app_clicked(self, listbox, row):
-        """Triggered when an app row is clicked with the mouse"""
         if row and hasattr(row, 'app_data'):
             self.launch_item(row.app_data)
 
@@ -269,23 +260,15 @@ class TMenu:
         row = Gtk.ListBoxRow()
         row.app_data = app
         box = Gtk.Box(spacing=10, border_width=5)
-        
-        # Pull icon name/path from various possible keys
         icon_name = app.get("Icon") or app.get("icon") or "application-x-executable"
-        
-        icon_widget = self.get_scaled_icon(icon_name, self.ICON_SIZE)
-        box.pack_start(icon_widget, False, False, 0)
-        
+        box.pack_start(self.get_scaled_icon(icon_name, self.ICON_SIZE), False, False, 0)
         row.label_widget = Gtk.Label(label=str(app.get("Name") or "Unknown"), xalign=0)
+        row.label_widget.set_ellipsize(3) # Ensure label doesn't expand right column
         box.pack_start(row.label_widget, True, True, 0)
-        
         row.add(box)
         self.app_list.add(row)
-        
-        if visible:
-            row.show_all()
-        else:
-            row.hide()
+        if visible: row.show_all()
+        else: row.hide()
         return row
 
     def on_search(self, entry):
@@ -299,16 +282,12 @@ class TMenu:
         p_matches = {p["Name"] for p in self.power_commands_data if txt.lower() in p["Name"].lower()}
         
         found = False
-        
-        # SPEED OPTIMIZATION 2: Prevent GTK from redrawing widgets that are already visible
         for row in self.app_list.get_children():
             if row == self.terminal_row: 
                 if row.get_visible(): row.hide()
                 continue
-            
             name = row.app_data.get("Name")
             should_show = (name in match_names or name in p_matches)
-            
             if should_show:
                 if not row.get_visible(): row.show_all()
                 found = True
@@ -329,11 +308,8 @@ class TMenu:
         if data.get("is_power"):
             act = data.get("action")
             if hasattr(power, act): 
-                try: 
-                    getattr(power, act)()
-                except Exception: 
-                    pass
-
+                try: getattr(power, act)()
+                except Exception: pass
         elif data.get("is_terminal"):
             cmd = data.get("Exec", "")
             try: 
@@ -351,8 +327,6 @@ class TMenu:
             cmd = data.get("Exec", "")
             args = [a for a in shlex.split(cmd) if not a.startswith('%')]
             try:
-                # FIX: Send all background app logs to DEVNULL so they don't hang 
-                # looking for the closed terminal window!
                 subprocess.Popen(
                     args, 
                     start_new_session=True,
@@ -363,7 +337,6 @@ class TMenu:
             except Exception: 
                 pass
         
-        # DAEMON ACTION: Hide the menu so it is ready for next time
         self.hide_menu()
 
     def load_power_buttons(self):
@@ -403,8 +376,6 @@ class TMenu:
     def on_cat_selected(self, row):
         if not row or self.search_entry.get_text().strip(): return
         target = row.cat_name
-        
-        # SPEED OPTIMIZATION 3: Prevent Category Redraws
         for child in self.app_list.get_children():
             if child == self.terminal_row: 
                 if child.get_visible(): child.hide()
@@ -424,34 +395,6 @@ class TMenu:
                 listbox.select_row(r)
                 break
 
-    def on_key(self, w, e):
-        k = e.keyval
-        if k == Gdk.KEY_Escape: 
-            self.hide_menu() # Hides gracefully
-            return True
-        if k == Gdk.KEY_Left:
-            self.active_list = self.cat_list
-            self.select_first_visible(self.cat_list)
-            return True
-        if k == Gdk.KEY_Right:
-            self.active_list = self.app_list
-            self.select_first_visible(self.app_list)
-            return True
-        if k in [Gdk.KEY_Up, Gdk.KEY_Down]:
-            self.navigate(1 if k == Gdk.KEY_Down else -1)
-            if self.active_list == self.cat_list:
-                self.on_cat_selected(self.cat_list.get_selected_row())
-            return True
-        if k == Gdk.KEY_Return:
-            s = self.active_list.get_selected_row()
-            if s and hasattr(s, 'app_data'): self.launch_item(s.app_data)
-            return True
-        if Gdk.keyval_to_unicode(k) > 31:
-            if not self.search_entry.is_focus():
-                self.search_entry.grab_focus()
-                self.search_entry.set_position(-1)
-        return False
-
     def navigate(self, step):
         vis = [r for r in self.active_list.get_children() if r.get_visible()]
         if not vis: return
@@ -464,6 +407,25 @@ class TMenu:
         alloc = target_row.get_allocation()
         adj.clamp_page(alloc.y, alloc.y + alloc.height)
 
+    def on_key(self, w, e):
+        k = e.keyval
+        if k == Gdk.KEY_Escape: self.hide_menu(); return True
+        if k == Gdk.KEY_Left: self.active_list = self.cat_list; self.select_first_visible(self.cat_list); return True
+        if k == Gdk.KEY_Right: self.active_list = self.app_list; self.select_first_visible(self.app_list); return True
+        if k in [Gdk.KEY_Up, Gdk.KEY_Down]:
+            self.navigate(1 if k == Gdk.KEY_Down else -1)
+            if self.active_list == self.cat_list: self.on_cat_selected(self.cat_list.get_selected_row())
+            return True
+        if k == Gdk.KEY_Return:
+            s = self.active_list.get_selected_row()
+            if s and hasattr(s, 'app_data'): self.launch_item(s.app_data)
+            return True
+        if Gdk.keyval_to_unicode(k) > 31:
+            if not self.search_entry.is_focus():
+                self.search_entry.grab_focus()
+                self.search_entry.set_position(-1)
+        return False
+
     def get_position_from_args(self):
         if "--left" in sys.argv: return "left"
         elif "--right" in sys.argv: return "right"
@@ -473,7 +435,7 @@ class TMenu:
         else: return self.config.get("layout", {}).get("horizontal_position", "left")
 
     def set_smart_position(self):
-        """Position the window dynamically for Wayland or X11"""
+        """RESTORED: Full original positioning logic with monitor detection and centering"""
         try:
             layout = self.config.get("layout", {})
             vertical_position = layout.get("vertical_position", "bottom")
@@ -486,6 +448,8 @@ class TMenu:
             if self.is_wayland and HAS_LAYER_SHELL:
                 for edge in [GtkLayerShell.Edge.TOP, GtkLayerShell.Edge.BOTTOM, GtkLayerShell.Edge.LEFT, GtkLayerShell.Edge.RIGHT]:
                     GtkLayerShell.set_anchor(self.window, edge, False)
+
+                GtkLayerShell.set_exclusive_zone(self.window, -1)
 
                 if vertical_position == "top":
                     GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.TOP, True)
@@ -500,10 +464,13 @@ class TMenu:
                 elif horizontal_position == "right":
                     GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.RIGHT, True)
                     GtkLayerShell.set_margin(self.window, GtkLayerShell.Edge.RIGHT, max(0, screen_margin - offset_x))
+                else: # Center on Wayland
+                    GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.LEFT, False)
+                    GtkLayerShell.set_anchor(self.window, GtkLayerShell.Edge.RIGHT, False)
 
                 return False
 
-            # X11 POSITIONING (Absolute Coordinates Fallback)
+            # X11 POSITIONING (Detection of Pointer Monitor)
             display = Gdk.Display.get_default()
             monitor = None
             try:
@@ -519,21 +486,23 @@ class TMenu:
                 monitor = monitors[0] if monitors else None
             
             if not monitor: return False
-            
             geom = monitor.get_geometry()
             
+            # Horizontal calc
             if horizontal_position == "left":
                 x = geom.x + screen_margin + offset_x
             elif horizontal_position == "right":
                 x = geom.x + geom.width - self.WIDTH - screen_margin + offset_x
-            else:  
+            else: # Center
                 x = geom.x + (geom.width // 2) - (self.WIDTH // 2) + offset_x
             
+            # Vertical calc
             if vertical_position == "top":
                 y = geom.y + screen_margin + offset_y
             else:  
                 y = geom.y + geom.height - self.HEIGHT - screen_margin + offset_y
             
+            # Constrain to screen bounds
             x = max(geom.x, min(int(x), geom.x + geom.width - self.WIDTH))
             y = max(geom.y, min(int(y), geom.y + geom.height - self.HEIGHT))
             
@@ -541,22 +510,15 @@ class TMenu:
             
         except Exception as e:
             print(f"DEBUG: Position error: {e}")
-        
         return False
 
     def run(self):
-        # Fallback runner if the user launches normally without the daemon
-        def signal_handler(sig, frame):
-            self.true_quit()
-        
+        def signal_handler(sig, frame): self.true_quit()
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        
         try:
             self.show_menu()
             Gtk.main()
-        except KeyboardInterrupt:
-            self.true_quit()
         except Exception as e:
             print(f"DEBUG: Run error: {e}")
             self.true_quit()
